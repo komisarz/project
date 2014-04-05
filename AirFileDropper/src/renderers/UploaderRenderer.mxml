@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:HGroup xmlns:fx="http://ns.adobe.com/mxml/2009" 
+		  xmlns:s="library://ns.adobe.com/flex/spark" 
+		  xmlns:mx="library://ns.adobe.com/flex/mx" 
+		  xmlns:button="com.dropuploader.skins.button.*" 
+		  xmlns:button1="com.dropuploader.button.*"
+		  width="100%" height="60" 
+		  initialize="onCC()"
+		  mouseDown="onMouseDown(event)"
+		  dragEnter="onDropOver(event)"
+		  dragDrop="onDrop(event)" xmlns:flexair="com.flexair.*"
+		  >
+	
+	<fx:Script>
+		<![CDATA[
+			import events.DropUploaderEvent;
+			import events.UploaderEvent;
+			
+			import model.FileInfo;
+			import model.FileVO;
+			
+			import mx.controls.Image;
+			import mx.core.DragSource;
+			import mx.events.DragEvent;
+			import mx.graphics.ImageSnapshot;
+			import mx.managers.DragManager;
+			
+			import renderers.events.ButtonsRendererEvent;
+			
+			private var _time:Timer;
+			public var fileUploading:FileVO;
+			
+			[Embed("assets/btn_close_green.png")]
+			private const _icon:Class;
+			
+			private function onCC():void
+			{
+				pb.label = resourceManager.getString('language', 'waiting');
+				lblProgress.text = 	fileUploading.file.name;
+				
+				if (fileUploading.file.icon != null && fileUploading.file.icon.bitmaps.length > 0)
+					icon.source = fileUploading.file.icon.bitmaps[0];
+			}
+	
+			public function startUploading(path:String, name:String):void
+			{
+				btnDelete.visible = btnDelete.includeInLayout =  false;
+	
+				fileUploading.isProgress = true;
+				
+				fileUploading.file.addEventListener(ProgressEvent.PROGRESS, onProgress, false, 0, true);
+				fileUploading.file.addEventListener(Event.COMPLETE, onComplete, false, 0, true);
+				fileUploading.file.addEventListener(IOErrorEvent.IO_ERROR, onError, false, 0, true);
+				
+			
+				var uv:URLVariables = new URLVariables();
+				uv.path = name;	
+				
+				var url:URLRequest = new URLRequest(path);
+				url.method = URLRequestMethod.POST;
+				url.data = uv;
+				
+				fileUploading.file.upload(url, 'dropfile');
+				
+				_time = new Timer(1000)
+				_time.start();
+				
+				_time.addEventListener(TimerEvent.TIMER, timerHandler);
+				
+			}
+			
+			private function onError(e:IOErrorEvent):void
+			{
+				removeListeners(); 
+				
+				fileUploading.isComplete = true;
+				fileUploading.isProgress = false;
+				
+				btnDelete.visible = btnDelete.includeInLayout =  true;
+				pb.label = resourceManager.getString('language', 'error');
+				
+				dispatchEvent(new UploaderEvent(UploaderEvent.UPLOAD_COMPLETE, null));
+			}
+			
+			private function onProgress(e:ProgressEvent):void
+			{	 									
+				pb.source = e;
+				pb.label = pb.percentComplete.toFixed(1)+ ' %';
+			}
+			
+			private function timerHandler(e:Event):void
+			{	
+				if (pb.source != null && _time != null )
+					lblSpeed.text = (pb.source.bytesLoaded/(_time.currentCount*1000)).toFixed(0)+ ' kB/s '
+			}
+			
+			protected function onCancel(event:MouseEvent):void
+			{		
+				
+				removeListeners();
+				
+				fileUploading.isProgress = false;
+				fileUploading.isComplete = true;
+				
+				dispatchEvent(new UploaderEvent(UploaderEvent.DELETE_CLICK, this));	 
+			}
+			
+			protected function onComplete(e:Event):void
+			{		
+				removeListeners();
+				
+				pb.label = resourceManager.getString('language', 'completed');
+
+				fileUploading.isProgress = false;
+				fileUploading.isComplete = true;
+
+				
+				lblSpeed.visible = false;
+				
+				btnDelete.visible = btnDelete.includeInLayout =  true;
+				btnCopyUrl.visible = btnCopyUrl.includeInLayout = true;
+				btnSendUrl.visible = btnSendUrl.includeInLayout = true;		
+				
+				btnDelete.icon = _icon;
+			
+				dispatchEvent(new UploaderEvent(UploaderEvent.UPLOAD_COMPLETE, null));
+			
+			}
+			
+			private function removeListeners():void
+			{
+				if (_time)
+				{
+					_time.removeEventListener(TimerEvent.TIMER, timerHandler);
+					_time.stop();
+				}
+				
+				fileUploading.file.removeEventListener(ProgressEvent.PROGRESS, onProgress);
+				fileUploading.file.removeEventListener(Event.COMPLETE, onComplete);
+				fileUploading.file.removeEventListener(IOErrorEvent.IO_ERROR, onError);		
+			}
+			
+			protected function onMouseDown(event:MouseEvent):void
+			{
+				var imageBitmapData:BitmapData = ImageSnapshot.captureBitmapData(this);
+
+				var di:Image = new Image();
+				di.source = new Bitmap(imageBitmapData);
+				
+				var dragSource:DragSource = new DragSource(); 
+				dragSource.addData(this, 'uploader'); 
+			
+				DragManager.doDrag(this, dragSource, event, di, 0, 0, 0.75);  
+			}
+			
+			private function onDropOver(e:DragEvent):void
+			{	
+				if (e.dragSource.hasFormat('uploader') && e.dragInitiator != this ) 
+				{			
+					DragManager.acceptDragDrop(UploaderRenderer(e.currentTarget));
+					DragManager.showFeedback(DragManager.MOVE);
+					
+				}
+			}
+			
+			private function onDrop(e:DragEvent):void
+			{
+				dispatchEvent(new DropUploaderEvent(DropUploaderEvent.DROP, e.dragInitiator as UploaderRenderer, this));
+			}
+
+
+			protected function onSendUrl(event:MouseEvent):void
+			{
+				dispatchEvent(new UploaderEvent(UploaderEvent.SEND_EMAIL, this, true));
+			}
+
+
+			protected function onCopyUrl(event:MouseEvent):void
+			{
+				dispatchEvent(new UploaderEvent(UploaderEvent.COPY_LINK, this, true));
+			}
+			
+			
+
+		]]>
+	</fx:Script>
+	
+	<s:SkinnableContainer id="con"
+						  width="100%" height="100%"
+						  styleName="progressArea"
+						  >
+		<s:HGroup width="100%" height="100%"
+				  paddingTop="5" paddingBottom="5" paddingLeft="10" paddingRight="10"
+				  verticalAlign="middle"
+				  >
+			<s:BitmapImage id="icon" width="32" height="32" />
+			
+			<s:VGroup width="100%" >
+				
+				<s:HGroup width="100%" verticalAlign="middle" height="20" >
+					<s:Label id="lblProgress"
+							 color="#ffffff"
+							 maxDisplayedLines="1"
+							 width="100%"
+							 fontSize="12"
+							 maxWidth="300"
+							 showTruncationTip="true"
+							 />
+					<s:Label id="lblSpeed"
+							 color="#ffffff"
+							 fontSize="12"
+							 />
+					
+					<flexair:Button id="btnCopyUrl"
+									width="18" height="18" 
+									styleName="buttonRound"
+									icon="@Embed('assets/btn_link.png')"
+									toolTip="{resourceManager.getString('language', 'copylink')}"
+									click="onCopyUrl(event)"
+									visible="false"
+									includeInLayout="false"
+									/>
+					<flexair:Button id="btnSendUrl"
+									width="18" height="18" 
+									styleName="buttonRound"
+									icon="@Embed('assets/btn_send.png')"
+									toolTip="{resourceManager.getString('language', 'sendEmail')}"
+									click="onSendUrl(event)"
+									visible="false"
+									includeInLayout="false"
+									/>
+					<flexair:Button id="btnDelete"
+									click="onCancel(event)"
+									styleName="buttonRound"
+									toolTip="{resourceManager.getString('language', 'remove')}"
+									width="18" height="18"
+									icon="@Embed('assets/btn_close_red.png')"
+									/>
+				</s:HGroup>
+
+				<mx:ProgressBar id="pb"
+								height="20"
+								labelPlacement="center"
+								labelWidth="280"
+								color="#ffffff"
+								mode="polled"
+								width="100%" 
+								styleName="progressBar"
+								/>
+			</s:VGroup>
+		</s:HGroup>
+		
+	</s:SkinnableContainer>
+</s:HGroup>

@@ -1,0 +1,938 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:WindowedApplication xmlns:fx="http://ns.adobe.com/mxml/2009" 
+					   xmlns:s="library://ns.adobe.com/flex/spark" 
+					   xmlns:mx="library://ns.adobe.com/flex/mx"
+					   xmlns:flexair="com.flexair.*" 
+					   styleName="app"
+					   width="350"
+					   creationComplete="onCC(event)"
+					   title="Drop Uploader - DEMO VERSION"
+					   closing="windowedapplication1_closingHandler(event)"
+					   >
+			
+	<fx:Style source="style/style.css" />
+
+	<fx:Metadata>  
+		[ResourceBundle("language")]
+	</fx:Metadata>
+	
+	<fx:Script>
+		<![CDATA[
+			import com.flexair.events.TitleBarEvent;
+			
+			import events.DropUploaderEvent;
+			import events.UploaderEvent;
+			
+			import model.FileInfo;
+			import model.FileVO;
+			
+			import mx.collections.ArrayCollection;
+			import mx.controls.Alert;
+			import mx.events.CloseEvent;
+			import mx.events.FlexEvent;
+			import mx.events.StateChangeEvent;
+			import mx.managers.DragManager;
+			import mx.rpc.events.ResultEvent;
+			import mx.rpc.http.HTTPService;
+			import mx.utils.ObjectProxy;
+			
+			import renderers.DropDownRenderer;
+			import renderers.UploaderRenderer;
+			import renderers.events.ButtonsRendererEvent;
+			
+			import spark.events.TextOperationEvent;
+			
+			/** VAR */					
+			private var _xml			:XML;
+			private var _fs				:FileStream;
+			private var _fl				:File = File.applicationStorageDirectory.resolvePath("config.xml");	
+			private var _bufor			:ArrayCollection = new ArrayCollection();
+			
+			[Bindable]
+			private var _files			:ArrayCollection = new ArrayCollection();
+			private var _fileToDelete	:String;
+			private var _fileDownload	:File;
+			private var _folderToOpen	:String;
+			
+			private var _fileDownlaodPath:String;
+			
+			/** CONST */
+			private var _tmpXmlContent:String = 
+				"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+				"<config>\n" +
+				"<uploadPHP></uploadPHP>\n" +
+				"<uploadFolder></uploadFolder>\n" +
+				"<language>en_US</language>\n" +
+				"<showCopyUrlButton>true</showCopyUrlButton>\n" +
+				"<showDownloadButton>true</showDownloadButton>\n" +
+				"<showDeleteButton>true</showDeleteButton>\n" +
+				"<showSendUrlButton>true</showSendUrlButton>\n" +
+				"</config>";
+				
+			public static const STATE_DEFAULT:String = 'STATE_DEFAULT';
+			public static const STATE_CONFIG:String  = 'STATE_CONFIG';
+			public static const STATE_FILES:String   = 'STATE_FILES';
+			
+			/** CREATION COMPLETE */
+			private function onCC(event:FlexEvent):void
+			{
+				height = dropArea.height+ 28 + 5;
+				
+				addEventListener(NativeDragEvent.NATIVE_DRAG_ENTER, onDragIn);
+				addEventListener(NativeDragEvent.NATIVE_DRAG_DROP, onDragDrop);
+				addEventListener(TitleBarEvent.CONFIG_CLICK, onConfig);
+				addEventListener(TitleBarEvent.FILES_CLICK, onFilesClick);
+				addEventListener(StateChangeEvent.CURRENT_STATE_CHANGE, onChange);
+				
+				dg.addEventListener(UploaderEvent.DELETE_CLICK, onDeleteItem);
+				dg.addEventListener(UploaderEvent.UPLOAD_COMPLETE, onUploadCompleteItem);		
+				dg.addEventListener(UploaderEvent.SEND_EMAIL, onSendEmailUpload);
+				dg.addEventListener(UploaderEvent.COPY_LINK, onCopyLinkUpload);	
+				dg.addEventListener(DropUploaderEvent.DROP, onDropItem);
+			
+				readXMLConfig();	
+			}
+			
+			/** DROP FILE TO APP */
+			private function onDropItem(e:DropUploaderEvent):void
+			{
+				dg.removeElement(e.uplS);
+				dg.removeElement(e.uplD);
+
+				var iS:Number = _bufor.getItemIndex(e.uplS);
+				var iD:Number = _bufor.getItemIndex(e.uplD);
+				
+				_bufor.setItemAt(e.uplS, iD);
+				_bufor.setItemAt(e.uplD, iS);
+				
+				if (iS > iD)
+				{
+					dg.addElementAt(e.uplS, iD);
+					dg.addElementAt(e.uplD, iS);
+				}
+				else
+				{
+					dg.addElementAt(e.uplD, iS);
+					dg.addElementAt(e.uplS, iD);
+				}
+			}
+			
+			/** COMPLETE UPLOAD FILE */
+			private function onUploadCompleteItem(e:UploaderEvent):void
+			{		
+				startUpoloading();
+			}	
+		
+			
+			/** */
+			private function onCopyLinkUpload(e:UploaderEvent):void
+			{		
+				var systemClipboard:Clipboard = Clipboard.generalClipboard;
+				systemClipboard.setData(ClipboardFormats.TEXT_FORMAT, getServerPatch()+_xml.uploadFolder+e.uploader.fileUploading.file.name);
+			}	
+			
+			/** */
+			private function onSendEmailUpload(e:UploaderEvent):void
+			{		
+				var url:String = "mailto:?body="+getServerPatch()+_xml.uploadFolder+e.uploader.fileUploading.file.name;
+				var urlReq:URLRequest = new URLRequest(url); 
+				navigateToURL(urlReq);
+			}	
+			
+			
+			/** DRAG IN FILE TO APP */
+			private function onDragIn(e:NativeDragEvent):void
+			{
+				if(e.clipboard.hasFormat(ClipboardFormats.FILE_LIST_FORMAT))
+				{
+					var files:Array = e.clipboard.getData(ClipboardFormats.FILE_LIST_FORMAT) as Array;
+					DragManager.acceptDragDrop(this);
+				}
+			}
+			
+			/** DROP FILE TO APP */
+			private function onDragDrop(e:NativeDragEvent):void
+			{	
+				var arrFiles:Array = e.clipboard.getData(ClipboardFormats.FILE_LIST_FORMAT) as Array;				
+				for each (var fileItem:File in arrFiles)
+				{
+					if (fileItem.isDirectory)
+					{		
+						for each (var fileItem1:File in fileItem.getDirectoryListing())
+						{
+							if (!fileItem1.isDirectory)
+								arrFiles.push(fileItem1);
+						}
+						continue;
+					}
+
+					if (_bufor.length == 15)
+						break;
+					
+					if (fileItem.size < 100000000)
+					{
+						var fu:FileVO = new FileVO();
+						fu.file = fileItem;
+						
+						var  uploader:UploaderRenderer = new UploaderRenderer();
+						uploader.fileUploading = fu;
+						
+						_bufor.addItem(uploader)
+						dg.addElement(uploader);
+					}
+				}
+
+				startUpoloading();				
+				updateHeight();	
+			}
+			
+			/** START UPLOADING */
+			private function startUpoloading():void
+			{
+				for each (var upl:UploaderRenderer in _bufor)
+				{
+					if (upl.fileUploading.isProgress == true)
+					{
+						return;
+					}
+				}
+				
+				for each (var up:UploaderRenderer in _bufor)
+				{
+					if ((up.fileUploading.isProgress == false) && (up.fileUploading.isComplete == false))
+					{
+  						up.startUploading(_xml.uploadPHP, _xml.uploadFolder+up.fileUploading.file.name);
+						break;						
+					}
+				}	
+			}
+
+			/** UPDATE HEIGHT APP */
+			private function updateHeight():void
+			{
+				dg.height = _bufor.length*60 + (_bufor.length-1)*5;
+				
+				if (currentState == STATE_CONFIG)
+					height = cConfig.height  + dg.height + 28 + 5;
+				else if (currentState == STATE_FILES)
+				{
+					height = cFiles.height + dg.height + 28 + 5;
+				}
+				else
+					height = dropArea.height  + dg.height + 28 + 5;
+			}
+
+			/** DELETE ITEM FROM LIST */
+			private function onDeleteItem(e:UploaderEvent):void
+			{				
+				dg.removeElement(e.uploader);
+				_bufor.removeItemAt(_bufor.getItemIndex(e.uploader));
+
+				updateHeight();
+				
+				startUpoloading();
+			}
+
+			/** OPEN CONFIG */
+			private function onConfig(e:TitleBarEvent):void
+			{
+ 				currentState = STATE_CONFIG;	
+				
+				if (_xml)
+				{
+					txtUploadFolder.text = _xml.uploadFolder;
+					txtUploadPHP.text	 = _xml.uploadPHP;
+					
+					if (_xml.showCopyUrlButton == 'true')
+						cbShowCopyUrlButton.selected = true;
+					else
+						cbShowCopyUrlButton.selected = false;
+					
+					if (_xml.showDownloadButton == 'true')
+						cbShowDownloadButton.selected = true;
+					else
+						cbShowDownloadButton.selected = false;
+					
+					if (_xml.showDeleteButton == 'true')
+						cbShowDeleteButton.selected = true;
+					else
+						cbShowDeleteButton.selected = false;
+					
+					
+					if (_xml.showSendUrlButton == 'true')
+						cbShowSendEmailButton.selected = true;
+					else
+						cbShowSendEmailButton.selected = false;
+					
+	
+					for each (var item:Object in cbLanguage.dataProvider)
+					{
+						if (item.id == _xml.language)
+						{
+							cbLanguage.selectedItem = item;
+							break;
+						}
+					}
+				}
+				
+			/** DEMO */
+ 				txtUploadFolder.editable = false;
+				txtUploadPHP.editable = false;
+				cbShowCopyUrlButton.selected = true;
+				cbShowDownloadButton.selected = true;
+				cbShowDeleteButton.selected = true;
+				cbShowSendEmailButton.selected = true; 
+			/** DEMO */
+
+			}
+
+			/** CLOSE CONFIG */
+			private function onCloseConfig(event:MouseEvent=null):void
+			{
+				currentState = STATE_DEFAULT;
+			}
+
+			/** UPDATE HEIGHT */
+			private function onChange(e:StateChangeEvent):void
+			{
+				updateHeight();
+			}
+
+			/** SAVE CONFIGURATION XML */
+			private function saveXML():void
+			{
+				if (_xml)
+				{
+					_xml.uploadPHP 		= txtUploadPHP.text;
+					_xml.uploadFolder 	= txtUploadFolder.text;
+					_xml.language 		= cbLanguage.selectedItem.id;
+					
+					_xml.showCopyUrlButton 		= cbShowCopyUrlButton.selected;
+					_xml.showDeleteButton 		= cbShowDeleteButton.selected;
+					_xml.showDownloadButton 	= cbShowDownloadButton.selected;
+					_xml.showSendUrlButton		= cbShowSendEmailButton.selected;
+					
+					var newXMLStr:String = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + _xml.toXMLString();
+					
+					_fs = new FileStream();
+					_fs.open(_fl, FileMode.WRITE);
+					_fs.writeUTFBytes(newXMLStr);
+					_fs.close();
+					
+					resourceManager.localeChain = [ cbLanguage.selectedItem.id ];
+					
+					onCloseConfig();
+				}
+			}
+
+			/** READ XML */
+			private function readXMLConfig():void
+			{		
+				_fs = new FileStream();
+				if (!_fl.exists)  
+				{				
+					_fs.open(_fl, FileMode.WRITE);
+					_fs.writeUTFBytes(_tmpXmlContent);
+							
+					_fs.addEventListener(Event.COMPLETE, onCCxml);
+					_fs.openAsync(_fl, FileMode.READ);
+				}	
+				else
+				{
+					_fs.open(_fl, FileMode.READ);
+					
+					_fs.addEventListener(Event.COMPLETE, onCCxml);
+					_fs.openAsync(_fl, FileMode.READ);
+				}
+			}
+
+			/** AFTER CONFIGURATION FILE READ */
+			private function onCCxml(e:Event):void
+			{
+				_xml = XML(_fs.readUTFBytes(_fs.bytesAvailable));				
+				_fs.removeEventListener(Event.COMPLETE, onCC);
+				
+				/** DEMO */		
+				_xml.uploadFolder  = 'upload/';
+				_xml.uploadPHP 	   = "http://www.drogowa.nazwa.pl/flexair.com.pl/dropuploader/upload.php";
+				/** DEMO */
+								
+				resourceManager.localeChain = [ _xml.language ];
+			
+				if ((_xml.window as XMLList).length() > 0)
+				{
+					nativeWindow.x 	= _xml.window.x;
+					nativeWindow.y 	= _xml.window.y;
+				}
+
+				_fs.close();
+				_fs = null;
+				
+			}
+			
+			/** GET FILES FROM UPLOADE FOLDER */
+			private function onFilesClick(e:TitleBarEvent):void
+			{					
+				getFiles();
+			}
+			
+			/** GET FILES IN UPLOAD FOLDER */
+			private function getFiles():void
+			{
+				var h:HTTPService = new HTTPService(); 
+				h.url=getServerPatch()+"getFiles.php";
+				h.showBusyCursor = true;
+				h.request={
+					uploadFolder: _xml.uploadFolder
+				}
+				h.useProxy = false;
+				h.method="POST";
+				h.addEventListener(ResultEvent.RESULT, okSend);
+				h.send(); 
+			}
+			
+		
+			/** AFTER FILES DOWNLOADED (CREATE LIST) */
+			private function okSend(e:ResultEvent):void
+			{
+				_files = new ArrayCollection();
+				if (e.result.files != null)
+				{
+					if (e.result.files.file is ObjectProxy)
+					{
+						var obj:ObjectProxy = e.result.files.file;
+						var tmp1:FileInfo = new FileInfo();
+						tmp1.name 	= obj.name;
+						tmp1.ext 	= obj.ext;
+						tmp1.date 	= obj.date;
+						tmp1.size 	= obj.size;
+						
+						
+						if (_xml.showDeleteButton == true)
+							tmp1.showDeleteButton 	= true;
+						
+						if (_xml.showCopyUrlButton == true)
+							tmp1.showUrlButton 	= true;
+						
+						if (_xml.showDownloadButton == true)
+							tmp1.showDownloadButton = true;
+						
+						if (_xml.showSendUrlButton == true)
+							tmp1.showSendUrlButton = true;
+						
+						_files.addItem(tmp1);
+					}
+					else
+					{
+						for each (var file:ObjectProxy in e.result.files.file)
+						{
+							var tmp:FileInfo = new FileInfo();
+							tmp.name	= file.name;
+							tmp.ext 	= file.ext;
+							tmp.date 	= file.date;
+							tmp.size	= file.size;
+							
+							if (_xml.showDeleteButton == true)
+								tmp.showDeleteButton = true;
+							
+							if (_xml.showCopyUrlButton == true)
+								tmp.showUrlButton 	= true;
+							
+							if (_xml.showDownloadButton == true)
+								tmp.showDownloadButton = true;
+							
+							if (_xml.showSendUrlButton == true)
+								tmp.showSendUrlButton = true;
+							
+							_files.addItem(tmp);
+						}
+					}
+				}
+				currentState = STATE_FILES;		
+				updateHeight();
+
+				dataFiles.addEventListener(ButtonsRendererEvent.DELETE_CLICK, onDeleteFile);
+				dataFiles.addEventListener(ButtonsRendererEvent.DOWNLOAD_CLICK, onDownloadFile);
+				dataFiles.addEventListener(ButtonsRendererEvent.COPY_CLICK, onCopyClick);
+				dataFiles.addEventListener(ButtonsRendererEvent.SEND_EMAIL, sendEmail);
+				
+			}
+			
+			/** COPY FILE URL TO CLIPBOARD */
+			private function onCopyClick(e:ButtonsRendererEvent):void
+			{
+				var systemClipboard:Clipboard = Clipboard.generalClipboard
+				systemClipboard.setData(ClipboardFormats.TEXT_FORMAT, getServerPatch()+_xml.uploadFolder+e.file.name+'.'+e.file.ext);
+			}
+			
+			/** GET SERWER PATH FORM CONFIGURATION */
+			private function getServerPatch():String
+			{
+				var _str:String = _xml.uploadPHP;
+				var _tmp:Array = _str.split('/');
+				_tmp.pop();
+				
+				return _tmp.join('/')+'/';
+			}
+			
+			/** DOWNLOAD FILE */
+			private function onDownloadFile(e:ButtonsRendererEvent):void
+			{	
+				_fileDownload = new File();
+				_fileDownload.download(new URLRequest(getServerPatch()+_xml.uploadFolder+e.file.name+'.'+e.file.ext), e.file.name+'.'+e.file.ext);
+				_fileDownload.addEventListener(Event.SELECT, onSelect);
+			}
+						
+			/** SELECT FILE TO DOWNLOAD */
+			private function onSelect(e:Event):void
+			{
+				_fileDownload.removeEventListener(Event.SELECT, onSelect);
+				_fileDownload.addEventListener(Event.COMPLETE, onComplete);
+				_fileDownload.addEventListener(ProgressEvent.PROGRESS, onProgress);
+
+				txtFileDownload.text = resourceManager.getString('language', 'download')+': '+_fileDownload.name;
+				downloadFile.visible = downloadFile.includeInLayout = true;
+				btnOpenDownload.visible = btnOpenDownload.includeInLayout = false;
+			}
+			
+			private function onProgress(e:ProgressEvent):void
+			{
+				var fr:FileReference = e.currentTarget as FileReference;
+				pb.setProgress(e.bytesLoaded as Number, e.bytesTotal as Number);
+			}
+			
+			private function onComplete(e:Event):void
+			{
+				btnOpenDownload.visible = btnOpenDownload.includeInLayout = true;
+				_fileDownlaodPath = _fileDownload.nativePath;
+				_fileDownload = null;
+			}
+			
+			/** POPUP WITH QUESTION ABOUT DELETE FILE */
+			private function onDeleteFile(e:ButtonsRendererEvent):void
+			{
+				_fileToDelete = e.file.name + '.' + e.file.ext;
+				Alert.show(resourceManager.getString('language', 'doYouReallyWantToDelete')+'\n'+e.file.name + '.' + e.file.ext, resourceManager.getString('language', 'deletefile'), 3, null, closeHandler, null, 2);	
+			}
+			
+			/** OK DELETE FILE */
+			private function closeHandler(e:CloseEvent):void
+			{
+				switch (e.detail)
+				{
+					case 1:	
+						deleteFile();
+						break;
+				}
+			}
+			
+			/** DELETE FILE */
+			private function deleteFile():void
+			{
+				var h:HTTPService = new HTTPService(); 
+				h.url=getServerPatch()+"deleteFile.php";
+				h.useProxy = false;
+				h.showBusyCursor = true;
+				h.request={
+					filename: _xml.uploadFolder+_fileToDelete
+				}
+				h.method="POST";
+				h.addEventListener(ResultEvent.RESULT, okDeleted);
+				h.send();
+			}
+			
+			/** AFTER DELETE FILE */
+			private function okDeleted(e:ResultEvent):void
+			{
+				getFiles();
+			}
+	
+			/** FILTER FUNCTION IN LIST */
+			private function onFilterSearchFunction(item:Object):Boolean
+			{
+				var re:RegExp = new RegExp(txtSearch.text.toUpperCase());
+				
+				var name:String = (item.name as String).toUpperCase();
+				
+				if (re.exec(name))
+					return true;
+				else
+					return false;
+			}
+			
+			/** CHANGE IN SEARCH INPUT */
+			protected function txtSearch_changeHandler(event:TextOperationEvent):void
+			{
+				_files.filterFunction = onFilterSearchFunction;
+				_files.refresh();
+			}
+
+			/** CANCEL DOWNLOAD FILE */
+			protected function button1_clickHandler(event:MouseEvent):void
+			{
+				if (_fileDownload != null)
+				{
+					_fileDownload.cancel();
+				}
+				
+				downloadFile.includeInLayout = downloadFile.visible = false;
+			}
+
+			/** OPEN DOWNLOAD FOLDER */
+			protected function btnOpen_clickHandler(event:MouseEvent):void
+			{
+				if (_fileDownlaodPath.split('\\').length > 0)
+				{
+					var f:File = new File(_fileDownlaodPath.split('\\')[0]);
+					f.openWithDefaultApplication();
+				}
+			}
+			
+			/** SAVE POSITION */
+			public function savePosition():void
+			{
+				var xml:XML = <window>
+								<x>{this.nativeWindow.x}</x>
+								<y>{this.nativeWindow.y}</y>
+							  </window>;
+				
+				delete  _xml.window;
+				
+				_xml.appendChild(xml);
+				
+				var newXMLStr:String = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + _xml.toXMLString();
+				
+				_fs = new FileStream();
+				_fs.open(_fl, FileMode.WRITE);
+				_fs.writeUTFBytes(newXMLStr);
+				_fs.close();
+			}
+			
+			protected function windowedapplication1_closingHandler(event:Event):void
+			{
+				savePosition();
+			}
+			
+			
+			/** SEND EMAIL TO FRIEND */
+			protected function sendEmail(e:ButtonsRendererEvent):void
+			{
+				var url:String = "mailto:?body="+getServerPatch()+_xml.uploadFolder+e.file.name+'.'+e.file.ext;
+				var urlReq:URLRequest = new URLRequest(url); 
+				navigateToURL(urlReq);
+			}
+			
+		]]>
+	</fx:Script>
+	
+	
+	<fx:Declarations>
+		<s:ArrayCollection id="dpLanguage">
+			<fx:Object>
+				<fx:name>en</fx:name>
+				<fx:id>en_US</fx:id>
+			</fx:Object>
+			<fx:Object>
+				<fx:name>de</fx:name>
+				<fx:id>de_DE</fx:id>		
+			</fx:Object>		
+			<fx:Object>
+				<fx:name>pl</fx:name>
+				<fx:id>pl_PL</fx:id>	
+			</fx:Object>		
+			<fx:Object>
+				<fx:name>se</fx:name>
+				<fx:id>sv_SE</fx:id>
+			</fx:Object>				
+			<fx:Object>
+				<fx:name>es</fx:name>
+				<fx:id>es_ES</fx:id>	
+			</fx:Object>
+			<fx:Object>
+				<fx:name>no</fx:name>
+				<fx:id>nb_NO</fx:id>
+			</fx:Object>		
+			<fx:Object>
+				<fx:name>it</fx:name>
+				<fx:id>it_IT</fx:id>	
+			</fx:Object>
+		</s:ArrayCollection>
+		
+	</fx:Declarations>
+	
+	<s:states>
+		<s:State name="STATE_DEFAULT" />
+		<s:State name="STATE_CONFIG" />
+		<s:State name="STATE_FILES" />
+	</s:states>
+	
+	<s:SkinnableContainer width="100%" 
+						  backgroundColor="#ffffff" 
+						  backgroundAlpha="0.005" 
+						  height="100%"
+						  >
+		<s:layout>
+			<s:VerticalLayout gap="5" />
+		</s:layout>
+		
+		<s:Group width="100%">
+					
+			<s:SkinnableContainer id="dropArea"
+								  width="100%" height="100"
+								  styleName="dropArea"
+								  >
+				<s:VGroup id="cArea"
+						  width="100%" height="100%"
+						  horizontalAlign="center"
+						  verticalAlign="middle"
+						  gap="1"
+						  >
+					<s:BitmapImage source="@Embed('assets/box.png')"  
+								   alpha="0.5"
+								   />
+					<s:Label text="{resourceManager.getString('language', 'dropFilesHere')}"
+							 />
+					
+				</s:VGroup>
+								
+			</s:SkinnableContainer>
+			
+			<s:SkinnableContainer id="cConfig"
+								  width="100%" height="275"
+								  includeIn="STATE_CONFIG"
+								  styleName="configArea"
+								  >
+				<s:VGroup width="100%" height="100%"
+						  paddingTop="10" 
+						  >
+					<s:VGroup width="100%" gap="2"
+							  paddingLeft="10" paddingRight="10"
+							  >
+						<s:Label text="{resourceManager.getString('language', 'pathFileUpload')}"
+								 fontWeight="bold"
+								 />
+						<s:TextInput id="txtUploadPHP"
+									 width="100%"
+									 height="22"
+									 focusAlpha="0"
+									 focusThickness="0"
+									 />
+					</s:VGroup>
+					
+					<s:VGroup width="100%" gap="2"
+							  paddingLeft="10" paddingRight="10"
+							  >
+						<s:Label text="{resourceManager.getString('language', 'pathUploadFolder')}" 
+								 fontWeight="bold"
+								 />
+						<s:TextInput id="txtUploadFolder"
+									 width="100%"
+									 height="22"
+									 focusAlpha="0"
+									 focusThickness="0"
+									 />
+					</s:VGroup>
+					
+					<s:VGroup width="100%" gap="2"
+							  paddingLeft="10" paddingRight="10"
+							  >
+						<s:Label text="{resourceManager.getString('language', 'language')}"
+								 fontWeight="bold"
+								 />
+						<s:HGroup width="100%" >
+							<s:DropDownList id="cbLanguage"
+											dataProvider="{dpLanguage}"
+											width="70"
+											itemRenderer="renderers.DropDownRenderer"
+											height="21"
+											labelField="name"
+											requireSelection="true"
+											fontWeight="bold"
+											/>
+						</s:HGroup>
+	
+					</s:VGroup>
+							
+					<s:VGroup width="100%" gap="2"
+							  paddingLeft="10" paddingRight="10"
+							  >
+						<flexair:CheckBox id="cbShowCopyUrlButton"
+										  label="{resourceManager.getString('language', 'showCopyUrl')}"
+										  fontWeight="bold"
+										  />
+					</s:VGroup>
+					
+					<s:VGroup width="100%" gap="2"
+							  paddingLeft="10" paddingRight="10"
+							  >
+						<flexair:CheckBox id="cbShowSendEmailButton"
+										  label="{resourceManager.getString('language', 'showSendUrl')}"
+										  fontWeight="bold"
+										  />
+					</s:VGroup>
+					
+					<s:VGroup width="100%" gap="2"
+							  paddingLeft="10" paddingRight="10"
+							  >
+							  <flexair:CheckBox id="cbShowDownloadButton"
+								  				label="{resourceManager.getString('language', 'showDownload')}"
+												fontWeight="bold"
+												/>
+					</s:VGroup>
+					
+					<s:VGroup width="100%" gap="2"
+							  paddingLeft="10" paddingRight="10"
+							  >
+						<flexair:CheckBox id="cbShowDeleteButton"
+										  label="{resourceManager.getString('language', 'showDelete')}"
+										  fontWeight="bold"
+										  />
+					</s:VGroup>
+					
+							
+					<s:SkinnableContainer width="100%" height="100%"
+										  styleName="bottomArea"
+										  >
+						
+						<mx:HRule width="100%" strokeColor="#d8d8d8" shadowColor="#666666" height="2" top="0" />
+											
+						<s:HGroup width="100%" height="100%"
+								  horizontalAlign="center"
+								  verticalAlign="middle"
+								  >
+							<flexair:Button label="{resourceManager.getString('language', 'close')}"
+									       width="80"
+										   height="20"
+										   toolTip="{resourceManager.getString('language', 'close')}"
+										   styleName="buttonNormal"
+										   click="onCloseConfig(event)"
+									       />		
+							<flexair:Button label="{resourceManager.getString('language', 'save')}"
+									       width="80"
+										   height="20"
+										   toolTip="{resourceManager.getString('language', 'save')}"
+									       styleName="buttonNormal"
+										   click="saveXML()"
+									       />	
+						</s:HGroup>
+					</s:SkinnableContainer>
+				</s:VGroup>
+			
+				</s:SkinnableContainer>
+			
+			<s:SkinnableContainer id="cFiles"
+								  width="100%" height="500"
+								  includeIn="STATE_FILES"
+								  styleName="configArea"
+								  >
+				
+				<s:VGroup width="100%" height="100%"
+						  gap="0"
+						  >
+					<s:HGroup width="100%" paddingTop="10" paddingLeft="15" paddingRight="15" paddingBottom="5" >
+						
+						<flexair:TextInput id="txtSearch"
+										   width="100%"
+										   height="22"
+										   focusAlpha="0"
+										   focusThickness="0"
+										   tabEnabled="false"
+										   tabFocusEnabled="false"
+										   change="txtSearch_changeHandler(event)"
+										   hintText="{resourceManager.getString('language', 'searchfile')}"
+										   />		
+					</s:HGroup>
+					
+					<s:VGroup width="100%" height="100%"
+							  gap="0" paddingLeft="15" paddingRight="15" paddingBottom="10" 
+								>
+						<s:List id="dataFiles"
+								width="100%" height="100%"
+								dataProvider="{_files}"
+								itemRenderer="renderers.ButtonsRenderer"
+								borderColor="0xd8d8d8"
+								styleName="itemListSkin"
+								>
+						</s:List>
+						
+						<mx:Spacer height="10" />
+						
+						<s:VGroup width="100%" 
+								  id="downloadFile"
+								  includeInLayout="false"
+							      visible="false"
+							      >
+							
+							<s:HGroup width="100%" verticalAlign="middle"
+									  height="20"
+									  >
+								<flexair:Label id="txtFileDownload" 
+											   width="100%"
+											   fontWeight="bold"
+											   />								
+								<flexair:Button id="btnOpenDownload"
+												width="18" height="18"
+												styleName="buttonRound"
+												click="btnOpen_clickHandler(event)"
+												toolTip="{resourceManager.getString('language', 'openDownloadFolder')}"
+												icon="@Embed('com/flexair/theme/grey/assets/btn_folder.png')"
+												visible="false"
+												includeInLayout="false"
+												/>
+							</s:HGroup>
+
+							<s:HGroup width="100%" 
+									  >
+								<mx:ProgressBar id="pb"
+												height="20"
+												labelPlacement="center"
+												labelWidth="280"
+												color="#ffffff"
+												width="100%" 
+												styleName="progressBar"
+												mode="manual"
+												/>
+								<flexair:Button width="18" height="18" 
+											   styleName="buttonRound"
+											   icon="@Embed('assets/btn_close_red.png')"
+											   toolTip="{resourceManager.getString('language', 'cancelDownload')}"
+											   click="button1_clickHandler(event)"
+											   />
+							</s:HGroup>
+							
+						</s:VGroup>
+					</s:VGroup>
+
+					<s:SkinnableContainer width="100%" height="40"
+										  styleName="bottomArea"
+										  >
+						
+						<mx:HRule width="100%" strokeColor="#d8d8d8" shadowColor="#666666" height="2" top="0" />
+						
+						<s:HGroup width="100%" height="100%"
+								  horizontalAlign="center"
+								  verticalAlign="middle"
+								  >
+							<flexair:Button label="{resourceManager.getString('language', 'close')}" 
+											width="80"
+											height="20"
+											toolTip="{resourceManager.getString('language', 'close')}"
+											styleName="buttonNormal"
+											click="onCloseConfig(event)"
+											/>	
+						</s:HGroup>
+					</s:SkinnableContainer>
+					
+				</s:VGroup>
+			
+			</s:SkinnableContainer>
+			
+		</s:Group>
+		
+		<s:VGroup id="dg" width="100%" gap="5"
+				  >
+		</s:VGroup>
+			
+	</s:SkinnableContainer>
+
+</s:WindowedApplication>

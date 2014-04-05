@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:DataRenderer xmlns:fx="http://ns.adobe.com/mxml/2009" 
+						  xmlns:s="library://ns.adobe.com/flex/spark" 
+						  xmlns:mx="library://ns.adobe.com/flex/mx" 
+						  focusEnabled="true"
+						  height="26" width="100%" 
+						  xmlns:flexair="com.flexair.*"
+						  rollOver="datarenderer1_mouseOverHandler(event)"
+						  rollOut="datarenderer1_mouseOutHandler(event)"
+						  >
+
+	<fx:Script>
+		<![CDATA[
+			import com.flexair.theme.grey.skins.buttons.ButtonRoundSkin;
+			
+			import model.FileInfo;
+			
+			import renderers.events.ButtonsRendererEvent;
+			
+			[Bindable]
+			private var _mouseOver:Boolean = false;
+			
+			protected function button1_clickHandler(event:MouseEvent):void
+			{
+				dispatchEvent(new ButtonsRendererEvent(ButtonsRendererEvent.DELETE_CLICK, data as FileInfo, true));
+			}
+			
+			protected function button2_clickHandler(event:MouseEvent):void
+			{
+				dispatchEvent(new ButtonsRendererEvent(ButtonsRendererEvent.DOWNLOAD_CLICK, data as FileInfo, true));
+			}
+
+			protected function button3_clickHandler(event:MouseEvent):void
+			{
+				dispatchEvent(new ButtonsRendererEvent(ButtonsRendererEvent.COPY_CLICK, data as FileInfo, true));
+			}
+
+
+			protected function button4_clickHandler(event:MouseEvent):void
+			{
+				dispatchEvent(new ButtonsRendererEvent(ButtonsRendererEvent.SEND_EMAIL, data as FileInfo, true));
+			}
+
+
+			protected function datarenderer1_mouseOverHandler(event:MouseEvent):void
+			{
+				if (!_mouseOver)
+				{
+					_mouseOver = true;
+				}
+			}
+
+
+			protected function datarenderer1_mouseOutHandler(event:MouseEvent):void
+			{
+				if (_mouseOver)
+				{
+					_mouseOver = false;
+				}
+			}
+
+		]]>
+	</fx:Script>
+
+
+	<s:VGroup id="btnContainer"
+			  width="100%" height="100%" 
+			  gap="0" paddingLeft="1" paddingRight="1"
+			  >
+		<s:HGroup width="100%" height="100%" 
+				  verticalAlign="middle" horizontalAlign="center"
+				  paddingLeft="5"
+				  paddingRight="5"
+				  >
+
+			<s:Label width="100%" 
+					 maxDisplayedLines="1"
+					 text="{(data as FileInfo).name+'.'+(data as FileInfo).ext}" 
+					 fontWeight="bold"
+					 toolTip="{resourceManager.getString('language', 'size')+': '+(data as FileInfo).kb+'\n'+resourceManager.getString('language', 'date')+': '+(data as FileInfo).dateStr}"
+					 />
+			<flexair:Button width="18" height="18" 
+							styleName="buttonRound"
+							icon="@Embed('assets/btn_link.png')"
+							toolTip="{resourceManager.getString('language', 'copylink')}"
+							click="button3_clickHandler(event)"
+							visible="{(data as FileInfo).showUrlButton &amp;&amp; _mouseOver}"
+							includeInLayout="{(data as FileInfo).showUrlButton &amp;&amp; _mouseOver}"
+							/>
+			<flexair:Button width="18" height="18" 
+							styleName="buttonRound"
+							icon="@Embed('assets/btn_send.png')"
+							toolTip="{resourceManager.getString('language', 'sendEmail')}"
+							click="button4_clickHandler(event)"
+							visible="{(data as FileInfo).showSendUrlButton &amp;&amp;  _mouseOver}"
+							includeInLayout="{(data as FileInfo).showSendUrlButton &amp;&amp;  _mouseOver}"
+							/>
+			<flexair:Button width="18" height="18" 
+						   styleName="buttonRound"
+						   icon="@Embed('assets/btn_download.png')"
+						   toolTip="{resourceManager.getString('language', 'downloadfile')}"
+						   click="button2_clickHandler(event)"
+						   visible="{(data as FileInfo).showDownloadButton &amp;&amp;  _mouseOver}"
+						   includeInLayout="{(data as FileInfo).showDownloadButton &amp;&amp; _mouseOver}"
+						   />
+			<flexair:Button width="18" height="18" 
+						   styleName="buttonRound"
+						   icon="@Embed('assets/btn_close_red.png')"
+						   toolTip="{resourceManager.getString('language', 'deletefile')}"
+						   click="button1_clickHandler(event)"
+						   visible="{(data as FileInfo).showDeleteButton &amp;&amp; _mouseOver }"
+						   includeInLayout="{(data as FileInfo).showDeleteButton &amp;&amp; _mouseOver }"
+						   />	
+		</s:HGroup>
+		<mx:HRule width="100%" strokeColor="0xd8d8d8" />
+	</s:VGroup>
+
+</s:DataRenderer>
