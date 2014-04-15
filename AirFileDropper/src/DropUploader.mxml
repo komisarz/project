@@ -17,7 +17,7 @@
 	</fx:Metadata>
 	
 	<fx:Script>
-		<![CDATA[
+		<![CDATA[sss
 			import com.flexair.events.TitleBarEvent;
 			
 			import events.DropUploaderEvent;
